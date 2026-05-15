@@ -1,0 +1,31 @@
+stages:
+  - lint
+  - test
+  - build
+  - deploy
+
+lint:
+  stage: lint
+  script:
+    - npm ci
+    - npm run lint
+  tags: [docker]
+
+test:
+  stage: test
+  script:
+    - npm run test
+  tags: [docker]
+
+build:
+  stage: build
+  script:
+    - npm run build
+  tags: [docker]
+
+deploy:
+  stage: deploy
+  script:
+    - echo "Deploy step placeholder - configure deployment provider"
+  when: manual
+  tags: [docker]

@@ -1,0 +1,19 @@
+{
+  "name": "acoolcollector",
+  "version": "0.1.0",
+  "description": "ACoolCOLLECTOR - ACoolPROJECT-Template adapted for collector-style projects in the ACoolECOSYSTEM",
+  "main": "src/api/index.js",
+  "scripts": {
+    "dev": "node src/api/index.js",
+    "start": "node src/api/index.js",
+    "lint": "eslint . || true",
+    "test": "echo \"No tests configured\" && exit 0",
+    "build": "echo \"No build step configured\""
+  },
+  "keywords": ["acool","collector","template","acoolecosystem"],
+  "author": "ACoolNERD",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  }
+}
