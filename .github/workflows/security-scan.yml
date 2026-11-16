@@ -1,0 +1,153 @@
+# Security scan — leaked secrets (TruffleHog), vulnerable dependencies (Trivy),
+# risky code patterns (Semgrep).
+#
+# Every third-party action and tool is pinned to an exact commit / version.
+# Mutable tags were the attack path in the March 2026 trivy-action hijack
+# (GHSA-69fq-xp46-6x23), so do not swap these pins for @v-tags.
+#
+# Results:
+#   public repos  -> Security tab > Code scanning (visible only to people with write access)
+#   private repos -> downloadable report on the workflow run (Artifacts)
+# Run logs and summaries only show counts, never finding details.
+
+name: Security scan
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  schedule:
+    - cron: "23 10 * * 1" # Mondays 10:23 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-scan-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  secrets:
+    name: Leaked secrets (TruffleHog)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Scans the FULL git history every run, but only reports keys that are
+      # still live. Rotating a leaked key turns this check green again.
+      - name: Scan git history for live credentials
+        run: |
+          docker run --rm -v "$PWD:/tmp" -w /tmp \
+            ghcr.io/trufflesecurity/trufflehog:3.99.9@sha256:2ec535840f860aa27f11fee20222fb790326ecd66325c96bd49d02ec6af46eca \
+            git file:///tmp/ --results=verified --fail --no-update --github-actions
+
+  dependencies:
+    name: Vulnerable dependencies (Trivy)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Scan dependencies and infrastructure config
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.76.2
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,misconfig
+          severity: CRITICAL,HIGH
+          limit-severities-for-sarif: true
+          ignore-unfixed: true
+          format: sarif
+          output: trivy.sarif
+          exit-code: "0"
+
+      - name: Check repo visibility
+        id: vis
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: echo "private=$(gh api "repos/$GITHUB_REPOSITORY" --jq .private)" >> "$GITHUB_OUTPUT"
+
+      - name: Summary
+        if: always()
+        run: |
+          n=$(jq '[.runs[].results[]] | length' trivy.sarif 2>/dev/null || echo "n/a")
+          echo "### Trivy: $n high/critical findings" >> "$GITHUB_STEP_SUMMARY"
+          echo "RESULT trivy=$n"
+
+      - name: Upload to Security tab (public repo)
+        if: always() && steps.vis.outputs.private == 'false' && hashFiles('trivy.sarif') != ''
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          sarif_file: trivy.sarif
+          category: trivy
+
+      - name: Save report (private repo)
+        if: always() && steps.vis.outputs.private == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: trivy-report
+          path: trivy.sarif
+          retention-days: 30
+          if-no-files-found: ignore
+
+  code:
+    name: Risky code patterns (Semgrep)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Semgrep
+        run: pipx install semgrep==1.185.0
+
+      - name: Scan code
+        run: semgrep scan --config p/default --metrics off --quiet --sarif --output semgrep.sarif
+
+      - name: Check repo visibility
+        id: vis
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: echo "private=$(gh api "repos/$GITHUB_REPOSITORY" --jq .private)" >> "$GITHUB_OUTPUT"
+
+      - name: Summary
+        if: always()
+        run: |
+          n=$(jq '[.runs[].results[]] | length' semgrep.sarif 2>/dev/null || echo "n/a")
+          echo "### Semgrep: $n findings" >> "$GITHUB_STEP_SUMMARY"
+          echo "RESULT semgrep=$n"
+
+      - name: Upload to Security tab (public repo)
+        if: always() && steps.vis.outputs.private == 'false' && hashFiles('semgrep.sarif') != ''
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+
+      - name: Save report (private repo)
+        if: always() && steps.vis.outputs.private == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: semgrep-report
+          path: semgrep.sarif
+          retention-days: 30
+          if-no-files-found: ignore
